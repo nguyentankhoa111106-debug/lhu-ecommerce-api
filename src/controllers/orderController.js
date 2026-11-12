@@ -2,7 +2,7 @@ const Order = require("../models/Order");
 const Product = require("../models/Product");
 const sendOrderInvoice = require("../utils/sendEmail");
 
-// [POST] /api/orders - Đặt hàng mới (Trừ tồn kho & In hóa đơn)
+// [POST] /api/orders - Đặt hàng mới (Zero-Trust Pricing & Trừ kho nguyên tử $inc)
 exports.createOrder = async (req, res) => {
   try {
     const {
@@ -32,7 +32,7 @@ exports.createOrder = async (req, res) => {
     let subtotal = 0;
     const verifiedItems = [];
 
-    // Duyệt qua từng món hàng, kiểm tra tồn kho và trừ kho
+    // Zero-Trust Pricing & Kiểm tra tồn kho trước
     for (const item of items) {
       const product = await Product.findById(item.productId);
       if (!product) {
@@ -41,19 +41,22 @@ exports.createOrder = async (req, res) => {
           message: `Không tìm thấy sản phẩm có mã ID: ${item.productId}`,
         });
       }
-      if (product.stock < item.quantity) {
+
+      const availableStock = product.stock !== undefined ? product.stock : (product.countInStock || 0);
+      if (availableStock < item.quantity) {
         return res.status(400).json({
           success: false,
-          message: `Sản phẩm "${product.name}" chỉ còn ${product.stock} món trong kho (bạn đặt ${item.quantity})!`,
+          message: `Sản phẩm "${product.name}" chỉ còn ${availableStock} chiếc trong kho (bạn đặt ${item.quantity})!`,
         });
       }
 
-      // Lấy giá bán (ưu tiên salePrice, nếu không có thì lấy price, nếu không có nữa thì mặc định 0)
+      // Zero-Trust: Giá máy chủ MongoDB quyết định, bỏ qua giá client gửi lên
       const itemPrice = Number(product.salePrice || product.price || 0);
 
-      // Trừ tồn kho
-      product.stock -= item.quantity;
-      await product.save();
+      // Trừ kho nguyên tử bằng toán tử $inc chuẩn MongoDB Atlas
+      await Product.findByIdAndUpdate(item.productId, {
+        $inc: { stock: -item.quantity, countInStock: -item.quantity },
+      });
 
       subtotal += itemPrice * item.quantity;
       verifiedItems.push({
@@ -61,6 +64,7 @@ exports.createOrder = async (req, res) => {
         name: product.name,
         quantity: item.quantity,
         price: itemPrice,
+        image: product.image,
       });
     }
 
@@ -71,21 +75,26 @@ exports.createOrder = async (req, res) => {
 
     const order = await Order.create({
       orderCode,
-      customerName,
-      customerPhone,
-      customerEmail,
-      shippingAddress,
+      user: req.user ? req.user._id : undefined,
+      customerName: customerName.trim(),
+      customerPhone: customerPhone.trim(),
+      customerEmail: customerEmail.trim(),
+      shippingAddress: shippingAddress.trim(),
       items: verifiedItems,
       shippingFee: finalShippingFee,
       totalAmount,
       paymentMethod: paymentMethod || "COD",
       paymentStatus: "UNPAID",
       orderStatus: "PENDING",
-      note: note || "",
+      note: note ? note.trim() : "",
     });
 
-    // In và gửi hóa đơn
-    sendOrderInvoice(order);
+    // In và gửi hóa đơn (bất đồng bộ không chặn luồng chính)
+    try {
+      sendOrderInvoice(order);
+    } catch (e) {
+      console.warn("Không gửi được email hóa đơn:", e.message);
+    }
 
     res.status(201).json({
       success: true,
@@ -97,7 +106,7 @@ exports.createOrder = async (req, res) => {
   }
 };
 
-// [GET] /api/orders - Lấy danh sách tất cả đơn hàng
+// [GET] /api/orders - Lấy danh sách tất cả đơn hàng (Admin)
 exports.getOrders = async (req, res) => {
   try {
     const orders = await Order.find().sort({ createdAt: -1 });
@@ -107,35 +116,118 @@ exports.getOrders = async (req, res) => {
   }
 };
 
-// [GET] /api/orders/:id - Xem chi tiết đơn hàng
+// [GET] /api/orders/myorders - Xem đơn cá nhân của người dùng đã đăng nhập
+exports.getMyOrders = async (req, res) => {
+  try {
+    const query = {};
+    if (req.user) {
+      query.$or = [{ user: req.user._id }, { customerEmail: req.user.email }];
+    } else if (req.query.email) {
+      query.customerEmail = req.query.email;
+    } else if (req.query.phone) {
+      query.customerPhone = req.query.phone;
+    } else {
+      return res.status(400).json({
+        success: false,
+        message: "Vui lòng cung cấp email hoặc đăng nhập để xem đơn hàng cá nhân!",
+      });
+    }
+
+    const orders = await Order.find(query).sort({ createdAt: -1 });
+    res.status(200).json({ success: true, total: orders.length, data: orders });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// [GET] /api/orders/:id - Xem chi tiết 1 đơn hàng
 exports.getOrderById = async (req, res) => {
   try {
     const order = await Order.findById(req.params.id);
-    if (!order)
+    if (!order) {
       return res
         .status(404)
         .json({ success: false, message: "Không tìm thấy đơn hàng!" });
+    }
     res.status(200).json({ success: true, data: order });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// [PUT] /api/orders/:id/status - Cập nhật trạng thái đơn hàng
+// [PUT] /api/orders/:id/pay - Nút thao tác trực tiếp duyệt thanh toán
+exports.payOrder = async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id);
+    if (!order) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Không tìm thấy đơn hàng!" });
+    }
+
+    order.paymentStatus = "PAID";
+    if (order.orderStatus === "PENDING") {
+      order.orderStatus = "CONFIRMED";
+    }
+    order.paidAt = new Date();
+    await order.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Duyệt thanh toán đơn hàng thành công!",
+      data: order,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// [PUT] /api/orders/:id/deliver - Nút thao tác trực tiếp xác nhận đã giao hàng
+exports.deliverOrder = async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id);
+    if (!order) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Không tìm thấy đơn hàng!" });
+    }
+
+    order.orderStatus = "DELIVERED";
+    order.deliveredAt = new Date();
+    await order.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Xác nhận giao hàng thành công!",
+      data: order,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// [PUT] /api/orders/:id/status - Cập nhật trạng thái đơn hàng tùy chọn
 exports.updateOrderStatus = async (req, res) => {
   try {
     const { status, paymentStatus } = req.body;
     const updateData = {};
     if (status) updateData.orderStatus = status;
-    if (paymentStatus) updateData.paymentStatus = paymentStatus;
+    if (paymentStatus) {
+      updateData.paymentStatus = paymentStatus;
+      if (paymentStatus === "PAID") updateData.paidAt = new Date();
+    }
+    if (status === "DELIVERED" || status === "COMPLETED") {
+      updateData.deliveredAt = new Date();
+    }
 
     const order = await Order.findByIdAndUpdate(req.params.id, updateData, {
       new: true,
     });
-    if (!order)
+    if (!order) {
       return res
         .status(404)
         .json({ success: false, message: "Không tìm thấy đơn hàng!" });
+    }
 
     res.status(200).json({
       success: true,

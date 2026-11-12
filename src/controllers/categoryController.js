@@ -19,18 +19,61 @@ exports.getCategories = async (req, res) => {
 exports.createCategory = async (req, res) => {
   try {
     const { name, description, image } = req.body;
-    if (!name) {
+    if (!name || name.trim() === "") {
       return res
         .status(400)
         .json({ success: false, message: "Vui lòng nhập tên danh mục!" });
     }
-    const slug = name.toLowerCase().replace(/\s+/g, "-");
-    const category = await Category.create({ name, slug, description, image });
+    const slug = name
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[đĐ]/g, "d")
+      .replace(/[^a-z0-9\s-]/g, "")
+      .trim()
+      .replace(/\s+/g, "-");
+
+    const category = await Category.create({
+      name: name.trim(),
+      slug,
+      description: description || "",
+      image: image || "images/watches/rolex-submariner.jpg",
+    });
+
     res.status(201).json({
       success: true,
       message: "Tạo danh mục mới thành công",
       data: category,
     });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// [PUT] /api/categories/:id - Cập nhật danh mục
+exports.updateCategory = async (req, res) => {
+  try {
+    const { name, description, image } = req.body;
+    const updateData = {};
+    if (name) {
+      updateData.name = name.trim();
+      updateData.slug = name
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[đĐ]/g, "d")
+        .replace(/[^a-z0-9\s-]/g, "")
+        .trim()
+        .replace(/\s+/g, "-");
+    }
+    if (description !== undefined) updateData.description = description;
+    if (image) updateData.image = image;
+
+    const category = await Category.findByIdAndUpdate(req.params.id, updateData, { new: true });
+    if (!category) {
+      return res.status(404).json({ success: false, message: "Không tìm thấy danh mục để cập nhật!" });
+    }
+    res.status(200).json({ success: true, message: "Cập nhật danh mục thành công", data: category });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

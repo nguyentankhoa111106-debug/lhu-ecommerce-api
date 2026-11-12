@@ -17,8 +17,7 @@ const categorySchema = new mongoose.Schema(
     },
     image: {
       type: String,
-      default:
-        "https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=500",
+      default: "images/watches/rolex-submariner.jpg",
     },
   },
   {

@@ -1,121 +1,129 @@
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const Product = require("../models/Product");
 
-// [POST] /api/ai/chat
+// [POST] /api/ai/chat - Trợ lý ảo AI Google Gemini RAG tư vấn đồng hồ
 exports.chatWithAI = async (req, res) => {
   try {
     const { message } = req.body;
-    if (!message) {
+    if (!message || message.trim() === "") {
       return res
         .status(400)
-        .json({ success: false, message: "Vui lòng nhập câu hỏi!" });
+        .json({ success: false, message: "Vui lòng nhập câu hỏi để trợ lý AI tư vấn!" });
     }
 
-    // 1. Lấy dữ liệu sản phẩm mới nhất từ MongoDB Atlas (Kỹ thuật RAG)
+    // 1. Kỹ thuật RAG: Lấy dữ liệu sản phẩm đồng hồ thời gian thực từ CSDL MongoDB Atlas
     const products = await Product.find()
-      .populate("category", "name")
-      .select(
-        "name price salePrice originalPrice stock rating description category",
-      );
+      .populate("category", "name slug")
+      .select("name brand price salePrice originalPrice stock countInStock rating description category");
 
-    // Ép giá tiền chuẩn theo đúng yêu cầu bài tập của bạn
-    const fixedProducts = products.map((p) => {
-      let price = Number(p.salePrice || p.price || 0);
-      const nameLower = p.name.toLowerCase();
-
-      if (nameLower.includes("polo") || nameLower.includes("áo")) {
-        price = 50000;
-      } else if (nameLower.includes("giày") || nameLower.includes("sneaker")) {
-        price = 200000;
-      }
-
+    const formattedProducts = products.map((p) => {
+      const price = Number(p.salePrice || p.price || 0);
+      const stock = p.stock !== undefined ? p.stock : (p.countInStock || 10);
       return {
-        ...p._doc,
-        displayPrice: price,
-        rating: p.rating || 5,
-        description: p.description || "Sản phẩm chất lượng cao của LHU Store.",
+        _id: p._id,
+        name: p.name,
+        brand: p.brand || "Chính Hãng",
+        categoryName: p.category ? p.category.name : "Đồng hồ",
+        salePrice: price,
+        originalPrice: p.originalPrice || Math.round(price * 1.15),
+        stock,
+        rating: p.rating || 5.0,
+        description: p.description || "Đồng hồ cao cấp chính hãng, bảo hành toàn diện.",
+        image: p.image,
       };
     });
 
-    // Tạo danh mục sản phẩm đưa vào context cho AI
-    const productCatalog = fixedProducts
+    // Tạo danh mục sản phẩm đưa vào Context Prompt (RAG)
+    const productCatalog = formattedProducts
       .map(
         (p, idx) =>
-          `${idx + 1}. Tên: "${p.name}" | Danh mục: ${
-            p.category ? p.category.name : "Khác"
-          } | Giá bán: ${p.displayPrice.toLocaleString("vi-VN")} đ | Còn lại: ${
-            p.stock || 10
-          } | Đánh giá: ${p.rating}⭐ | Mô tả: ${p.description}`,
+          `${idx + 1}. [ID: ${p._id}] "${p.name}" | Thương hiệu: ${p.brand} | Phân loại: ${p.categoryName} | Giá bán: ${p.salePrice.toLocaleString("vi-VN")} đ | Tồn kho: ${p.stock} chiếc | Đánh giá: ${p.rating}⭐ | Đặc điểm: ${p.description}`
       )
       .join("\n");
 
     const systemInstruction = `
-Bạn là "LHU AI Shopping Assistant" - Trợ lý bán hàng thông minh, thân thiện của Cửa hàng TMĐT ĐH Lạc Hồng.
-DANH SÁCH SẢN PHẨM HIỆN CÓ TRONG KHO:
+Bạn là "ChronoAI" - Chuyên gia tư vấn đồng hồ thời trang và cao cấp của Cửa Hàng Đồng Hồ Chronos (LHU Watch Store).
+CƠ SỞ DỮ LIỆU ĐỒNG HỒ ĐANG CÓ SẴN TRONG KHO (MONGODB ATLAS):
 ${productCatalog}
 
-QUY TẮC:
-1. Luôn xưng "Em" hoặc "Shop", gọi khách là "Bạn" hoặc "Quý khách".
-2. CHỈ gợi ý các sản phẩm có thật trong danh sách trên, nêu rõ giá bán chính xác (Áo Polo giá 50.000 đ, Giày Sneaker giá 200.000 đ).
-3. Mời khách bấm nút "Thêm giỏ" để đặt hàng.
+QUY TẮC TƯ VẤN:
+1. Luôn xưng hô lễ phép: xưng "Em" hoặc "ChronoAI / Shop", gọi khách là "Anh/Chị" hoặc "Quý khách".
+2. CHỈ gợi ý các mẫu đồng hồ có thật trong danh sách trên, nêu rõ tên đầy đủ, thương hiệu, loại máy (cơ/quartz/smartwatch), tính năng nổi bật (kính sapphire, chống nước,...) và giá bán chính xác bằng VNĐ.
+3. Nếu khách hỏi tầm giá (ví dụ dưới 5 triệu, từ 5 đến 15 triệu, hay cao cấp), hãy lọc đúng các sản phẩm phù hợp trong danh sách để tư vấn.
+4. Cuối câu tư vấn, hãy nhiệt tình mời khách bấm nút "🛒 Thêm giỏ" hoặc "👁️ Xem chi tiết" ngay trên giao diện web để đặt hàng.
 `;
 
     const apiKey = process.env.GEMINI_API_KEY;
 
-    // 2. Gọi Google Gemini AI (Nếu đã cấu hình API Key hợp lệ)
-    if (apiKey && apiKey.startsWith("AIzaSy")) {
+    // 2. Gọi Google Gemini AI (RAG)
+    if (apiKey && !apiKey.startsWith("AQ.Ab8")) {
       try {
         const genAI = new GoogleGenerativeAI(apiKey);
         const model = genAI.getGenerativeModel({
           model: "gemini-1.5-flash",
           systemInstruction,
         });
-        const result = await model.generateContent(
-          `Khách hàng hỏi: "${message}". Hãy tư vấn chi tiết.`,
-        );
+
+        const prompt = `Khách hàng hỏi: "${message}". Hãy tư vấn chi tiết, ngắn gọn, chuẩn xác theo kho hàng.`;
+        const result = await model.generateContent(prompt);
 
         return res.status(200).json({
           success: true,
-          provider: "Google Gemini 1.5 Flash",
+          provider: "Google Gemini 1.5 Flash (RAG)",
           reply: result.response.text(),
         });
       } catch (err) {
-        console.warn(
-          "Fallback sang chế độ tìm kiếm thông minh do lỗi API Gemini.",
-        );
+        console.warn("Chuyển sang Bộ xử lý RAG thông minh dự phòng:", err.message);
       }
     }
 
-    // 3. Chế độ Fallback thông minh dự phòng
-    const lowerMsg = message.toLowerCase();
-
-    // Lọc sản phẩm theo từ khóa câu hỏi của khách hàng
-    let matched = fixedProducts.filter((p) => {
+    // 3. Bộ máy RAG thông minh dự phòng (Smart Fallback Engine)
+    const lower = message.toLowerCase();
+    let matched = formattedProducts.filter((p) => {
       const pName = p.name.toLowerCase();
-      if (lowerMsg.includes("giày") || lowerMsg.includes("sneaker")) {
-        return pName.includes("giày") || pName.includes("sneaker");
-      }
-      if (lowerMsg.includes("áo") || lowerMsg.includes("polo")) {
-        return pName.includes("áo") || pName.includes("polo");
-      }
-      return (
-        pName.includes(lowerMsg) ||
-        (lowerMsg.includes("rẻ") && p.displayPrice <= 100000)
-      );
+      const pBrand = p.brand.toLowerCase();
+      const pCat = p.categoryName.toLowerCase();
+      const pDesc = p.description.toLowerCase();
+
+      // Kiểm tra từ khóa thương hiệu
+      if (lower.includes("rolex") && (pBrand.includes("rolex") || pName.includes("rolex"))) return true;
+      if (lower.includes("casio") && (pBrand.includes("casio") || pName.includes("casio"))) return true;
+      if (lower.includes("seiko") && (pBrand.includes("seiko") || pName.includes("seiko"))) return true;
+      if (lower.includes("tissot") && (pBrand.includes("tissot") || pName.includes("tissot"))) return true;
+      if (lower.includes("citizen") && (pBrand.includes("citizen") || pName.includes("citizen"))) return true;
+      if (lower.includes("apple") && (pBrand.includes("apple") || pName.includes("apple"))) return true;
+      if (lower.includes("orient") && (pBrand.includes("orient") || pName.includes("orient"))) return true;
+
+      // Kiểm tra phân loại
+      if (lower.includes("nữ") && (pCat.includes("nữ") || pName.includes("nữ"))) return true;
+      if (lower.includes("nam") && !lower.includes("nữ") && (pCat.includes("nam") || pName.includes("nam"))) return true;
+      if ((lower.includes("cơ") || lower.includes("automatic") || lower.includes("lộ cơ")) && (pCat.includes("cơ") || pDesc.includes("cơ") || pName.includes("automatic"))) return true;
+      if ((lower.includes("thông minh") || lower.includes("smartwatch") || lower.includes("watch")) && pCat.includes("thông minh")) return true;
+      if ((lower.includes("điện tử") || lower.includes("quartz") || lower.includes("g-shock")) && (pCat.includes("điện tử") || pName.includes("g-shock") || pName.includes("vintage"))) return true;
+
+      // Khoảng giá
+      if ((lower.includes("rẻ") || lower.includes("bình dân") || lower.includes("dưới 3 triệu") || lower.includes("dưới 5 triệu")) && p.salePrice <= 5000000) return true;
+      if ((lower.includes("cao cấp") || lower.includes("xa xỉ") || lower.includes("sang trọng")) && p.salePrice >= 15000000) return true;
+
+      return pName.includes(lower) || pBrand.includes(lower) || pDesc.includes(lower);
     });
 
-    const list = matched.length > 0 ? matched : fixedProducts.slice(0, 3);
+    const suggestions = matched.length > 0 ? matched.slice(0, 3) : formattedProducts.slice(0, 3);
 
-    let reply =
-      "Chào Bạn! Shop xin gợi ý các sản phẩm phù hợp nhất cho bạn:\n\n";
-    list.forEach((p) => {
-      reply += `✨ **${p.name}** - Giá: **${p.displayPrice.toLocaleString("vi-VN")} đ** (${p.rating}⭐)\n${p.description}\n\n`;
+    let reply = `Dạ ChronoAI chào Quý khách! Dựa trên yêu cầu **"${message}"**, Shop xin gợi ý các siêu phẩm đồng hồ cực kỳ phù hợp trong kho:\n\n`;
+
+    suggestions.forEach((p) => {
+      reply += `⌚ **${p.name}**\n`;
+      reply += `• Thương hiệu: **${p.brand}** | Phân loại: ${p.categoryName}\n`;
+      reply += `• Giá ưu đãi: **${p.salePrice.toLocaleString("vi-VN")} đ** (Giá gốc: ${p.originalPrice.toLocaleString("vi-VN")} đ) | ⭐ ${p.rating}/5.0\n`;
+      reply += `• Tồn kho: **${p.stock}** chiếc | Điểm nổi bật: ${p.description}\n\n`;
     });
-    reply += "Bạn có thể bấm vào sản phẩm trên giao diện để đặt mua ngay nhé!";
+
+    reply += `👉 Quý khách có thể bấm trực tiếp vào nút **"🛒 Thêm giỏ"** hoặc **"👁️ Xem chi tiết"** trên màn hình để đặt hàng ngay. Shop cam kết 100% chính hãng, bảo hành chu đáo ạ!`;
 
     return res.status(200).json({
       success: true,
-      provider: "Smart Engine",
+      provider: "ChronoAI RAG Engine (MongoDB Realtime)",
       reply,
     });
   } catch (error) {

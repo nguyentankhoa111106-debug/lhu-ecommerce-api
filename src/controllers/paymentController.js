@@ -1,6 +1,6 @@
 const Order = require("../models/Order");
 
-// [POST] /api/payment/create-qr - Tạo mã thanh toán QR động
+// [POST] /api/payment/create-qr - Tạo mã thanh toán QR động chuẩn VietQR Napas 247 & MoMo
 exports.createPaymentQR = async (req, res) => {
   try {
     const { orderId, paymentMethod } = req.body;
@@ -16,25 +16,24 @@ exports.createPaymentQR = async (req, res) => {
     const orderCode = order.orderCode;
     let qrUrl = "";
 
+    // Cấu hình Ngân hàng HDBank - Nguyễn Tấn Khoa
+    const bankId = process.env.BANK_ID || "HDB";
+    const accountNo = process.env.BANK_ACCOUNT_NO || "0859635701";
+    const accountName = process.env.BANK_ACCOUNT_NAME || "NGUYEN TAN KHOA";
+    const momoPhone = process.env.MOMO_PHONE || "0859635701";
+    const transferNote = `DH ${orderCode}`;
+
     if (paymentMethod === "VIETQR" || !paymentMethod) {
       // 1. Chuẩn VietQR (Napas 247)
-      const bankId = process.env.BANK_ID || "MB";
-      const accountNo = process.env.BANK_ACCOUNT_NO || "0987654321";
-      const accountName = encodeURIComponent(
-        process.env.BANK_ACCOUNT_NAME || "LHU ECOMMERCE STORE",
-      );
-      const addInfo = encodeURIComponent(`DH ${orderCode}`);
+      const encodedAccountName = encodeURIComponent(accountName);
+      const encodedAddInfo = encodeURIComponent(transferNote);
 
-      qrUrl = `https://img.vietqr.io/image/${bankId}-${accountNo}-compact2.png?amount=${totalAmount}&addInfo=${addInfo}&accountName=${accountName}`;
+      qrUrl = `https://img.vietqr.io/image/${bankId}-${accountNo}-compact2.png?amount=${totalAmount}&addInfo=${encodedAddInfo}&accountName=${encodedAccountName}`;
     } else if (paymentMethod === "MOMO_QR") {
       // 2. Mã QR MoMo
-      const momoPhone = process.env.MOMO_PHONE || "0987654321";
-      const momoName = encodeURIComponent("LHU STORE");
-      const momoData = encodeURIComponent(
-        `2|99|${momoPhone}|${momoName}||0|0|${totalAmount}|DH ${orderCode}|transfer_myqr`,
-      );
-
-      qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=${momoData}`;
+      const encodedAccountName = encodeURIComponent(accountName);
+      const encodedAddInfo = encodeURIComponent(transferNote);
+      qrUrl = `https://img.vietqr.io/image/MOMO-${momoPhone}-compact2.png?amount=${totalAmount}&addInfo=${encodedAddInfo}&accountName=${encodedAccountName}`;
     }
 
     res.status(200).json({
@@ -44,9 +43,13 @@ exports.createPaymentQR = async (req, res) => {
         orderId: order._id,
         orderCode: order.orderCode,
         totalAmount,
+        bankId,
+        accountNo,
+        accountName,
+        momoPhone,
         paymentMethod: paymentMethod || "VIETQR",
         qrUrl,
-        transferNote: `DH ${orderCode}`,
+        transferNote,
       },
     });
   } catch (error) {
@@ -67,7 +70,10 @@ exports.confirmPayment = async (req, res) => {
     }
 
     order.paymentStatus = "PAID";
-    order.orderStatus = "CONFIRMED";
+    if (order.orderStatus === "PENDING") {
+      order.orderStatus = "CONFIRMED";
+    }
+    order.paidAt = new Date();
     await order.save();
 
     res.status(200).json({

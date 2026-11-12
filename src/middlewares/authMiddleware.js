@@ -20,25 +20,22 @@ exports.protect = async (req, res, next) => {
   }
 
   try {
-    // Thêm secret dự phòng phòng trường hợp process.env chưa nhận
     const secret =
       process.env.JWT_SECRET || "LhuEcommerceSecretKey2026SuperSecure@!#";
     const decoded = jwt.verify(token, secret);
 
-    // Tự động xử lý cả id lẫn _id từ token
     const userId = decoded.id || decoded._id;
     req.user = await User.findById(userId).select("-password");
 
     if (!req.user) {
       return res.status(401).json({
         success: false,
-        message: "Tài khoản sở hữu token này không tồn tại!",
+        message: "Tài khoản sở hữu token này không tồn tại trên hệ thống!",
       });
     }
 
     next();
   } catch (error) {
-    console.log("Lỗi Verify Token cụ thể:", error.message); // In lỗi ra Terminal để kiểm tra
     return res.status(401).json({
       success: false,
       message: "Mã Token không hợp lệ hoặc đã hết hạn!",
@@ -46,7 +43,20 @@ exports.protect = async (req, res, next) => {
   }
 };
 
-// 2. Middleware phân quyền Quản trị viên (Admin Only)
+// 2. Middleware phân quyền linh hoạt theo Rubric: authorize("admin")
+exports.authorize = (...roles) => {
+  return (req, res, next) => {
+    if (!req.user || !roles.includes(req.user.role)) {
+      return res.status(403).json({
+        success: false,
+        message: `Quyền truy cập bị từ chối! Chức năng này yêu cầu vai trò: ${roles.join(", ")}`,
+      });
+    }
+    next();
+  };
+};
+
+// 3. Alias adminOnly
 exports.adminOnly = (req, res, next) => {
   if (req.user && req.user.role === "admin") {
     next();

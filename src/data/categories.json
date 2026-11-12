@@ -1,23 +1,37 @@
 [
   {
-    "_id": "cat_01",
-    "name": "Thời Trang Nam",
-    "slug": "thoi-trang-nam",
-    "description": "Quần áo, phụ kiện nam cao cấp",
-    "image": "https://images.unsplash.com/photo-1617137984095-74e4e5e3613f?w=500"
+    "_id": "cat_watch_01",
+    "name": "Đồng Hồ Nam",
+    "slug": "dong-ho-nam",
+    "description": "Bộ sưu tập đồng hồ nam lịch lãm, mạnh mẽ và sang trọng từ các thương hiệu hàng đầu thế giới.",
+    "image": "images/watches/rolex-submariner.jpg"
   },
   {
-    "_id": "cat_02",
-    "name": "Thời Trang Nữ",
-    "slug": "thoi-trang-nu",
-    "description": "Váy đầm, áo kiểu và thời trang công sở nữ",
-    "image": "https://images.unsplash.com/photo-1483985988355-763728e1935b?w=500"
+    "_id": "cat_watch_02",
+    "name": "Đồng Hồ Nữ",
+    "slug": "dong-ho-nu",
+    "description": "Thiết kế đồng hồ nữ quý phái, thanh lịch, đính đá và xà cừ tự nhiên tôn vinh vẻ đẹp phái nữ.",
+    "image": "images/watches/tissot-bella-ora-nu.jpg"
   },
   {
-    "_id": "cat_03",
-    "name": "Phụ Kiện & Giày Dép",
-    "slug": "phu-kien-giay-dep",
-    "description": "Balo, túi xách, giày sneaker và phụ kiện",
-    "image": "https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=500"
+    "_id": "cat_watch_03",
+    "name": "Đồng Hồ Cơ Automatic",
+    "slug": "dong-ho-co-automatic",
+    "description": "Đỉnh cao cơ khí truyền thống Thụy Sĩ & Nhật Bản với bộ máy tự động tinh xảo không dùng pin.",
+    "image": "images/watches/orient-star-skeleton.jpg"
+  },
+  {
+    "_id": "cat_watch_04",
+    "name": "Đồng Hồ Điện Tử & Quartz",
+    "slug": "dong-ho-dien-tu-quartz",
+    "description": "Độ chính xác cao, bền bỉ, chống nước và đa dạng phong cách thể thao năng động.",
+    "image": "images/watches/casio-vintage-a168.jpg"
+  },
+  {
+    "_id": "cat_watch_05",
+    "name": "Đồng Hồ Thông Minh (Smartwatch)",
+    "slug": "dong-ho-thong-minh",
+    "description": "Công nghệ hiện đại theo dõi sức khỏe, nhịp tim, oxy trong máu và kết nối thông minh.",
+    "image": "images/watches/apple-watch-ultra.jpg"
   }
 ]
